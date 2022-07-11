@@ -1,15 +1,15 @@
-library(tidyverse)
-require(hash)
+library(hash)
 library(config)
+library(psych)
+
 args = commandArgs(trailingOnly=TRUE)
 if(length(args)<1){
   stop("Config file not provided")
-  # config <- config::get(file = "/data/linkage/HCHS_SOL/Projects/2021_gencor_cog_sleep/Code/runGenCor_ALL_Base_v1.config")
 }else{
   config <- config::get(file = args[1])
 }
 
-
+# config <- config::get(file = "/data/linkage/HCHS_SOL/Projects/2021_gencor_cog_sleep/gen_cor_trial/runGenCor_ALL_Base_v1.config")
 #calculate genetic correlation between two traits given One matrix
 calc.gencorr <- function( bVC.1, bVC.2, covMatList, XsTXsinv.ClosedForm){
   
@@ -558,67 +558,13 @@ calc.fisher <- function(gencor, n, conf = 0.05){
   return(list(low=low,high=high))
 }
 
-
-CItoPval <- function(genc,adj_n){
-  # genc <- gencor$K; adj_n <- kinMat.adj_n
-  if(is.na(genc)){
-    return(NA)
-  }else if(abs(genc)>=1){
-    return(0)
-  }
-  fa <- function(x) {unlist(calc.fisher(genc,adj_n,conf = x))}
-  #Convert CI to pval
-  pvaltotest <- c(1e-90,0.99);i1=1;i2=2;  #initial wide guess
-  #now iteratively scan the region flanking zero
-  gi1 <- gi2 <- 0
-  for(p in 1:5){  #p=1
-    op <- pvaltotest; gi1 <- i1; gi2 <- i2
-    pvaltotest <- seq(pvaltotest[i1],pvaltotest[i2],(pvaltotest[i2]-pvaltotest[i1])/1000)
-    k_CIs <- sapply(pvaltotest, fa)
-    i1 <- which.max(replace(k_CIs[1,], k_CIs[1,]>=0, NA))
-    i2 <- which.min(replace(k_CIs[1,], k_CIs[1,]<=0, NA))
-    if((length(i1)<1) | (length(i2)<1)) {
-      if(length(op)>2){
-        pvaltotest <- op
-        k_CIs <- sapply(pvaltotest, fa)
-      }else{
-        gi1 <- i1; gi2 <- i2
-      }
-      break
-    }
-  }
-  if((length(gi1)<1) | (length(gi2)<1)) {  # check the other tail of the distribution
-    pvaltotest <- c(1e-90,0.99);i1=1;i2=2;  #initial wide guess
-    gi1 <- gi2 <- 0
-    for(p in 1:5){  #p=1
-      op <- pvaltotest; gi1 <- i1; gi2 <- i2
-      pvaltotest <- seq(pvaltotest[i1],pvaltotest[i2],(pvaltotest[i2]-pvaltotest[i1])/1000)
-      k_CIs <- sapply(pvaltotest, fa)
-      i1 <- which.max(replace(k_CIs[2,], k_CIs[2,]>=0, NA))
-      i2 <- which.min(replace(k_CIs[2,], k_CIs[2,]<=0, NA))
-      if((length(i1)<1) | (length(i2)<1)) {
-        if(length(op)>2){
-          k_CIs <- sapply(op, fa)
-        }else{
-          gi1 <- i1; gi2 <- i2
-        }
-        break
-      }
-    }
-    if((length(gi1)<1) | (length(gi2)<1)) {
-      if(abs(genc)>0.9){
-        return(0)
-      }else{
-        return(1)
-      }
-    }
-    ltpv <- approx(k_CIs[2,], pvaltotest, xout = 0)$y
-    return(2 * min(ltpv, 1 - ltpv))
-  }else{
-    ltpv <- approx(k_CIs[1,], pvaltotest, xout = 0)$y
-    return(2 * min(ltpv, 1 - ltpv))
-  }
+calc.fisher.CI <- function(zmean, zsd, conf = 0.05){
+  qnorm_conf <- qnorm(conf/2, sd = zsd ,lower.tail = FALSE)
+  low.z <- zmean - qnorm_conf
+  high.z <- zmean + qnorm_conf
   
+  low = fisher_inv_transform(low.z); high = fisher_inv_transform(high.z)
+  return(list(low=low,high=high))
 }
 
 getCurrentFileLocation <-  function()
@@ -744,7 +690,9 @@ if(file.exists(tpname)){
 
 print(paste0("Running ",Sys.getenv("LSB_JOBINDEX")))
 args<-c(Sys.getenv("LSB_JOBINDEX"))
-if (args==""){ #Generate runScript
+# print(paste0(" args ",args," - ", as.numeric(args[1])))
+# quit(save = "no")
+if ((args=="")|(args==0)){ #Generate runScript
   #final run script
   fileConn<-file(config$run_Gencor_script_filename)
   rrows <- c("#!/bin/sh",
@@ -762,7 +710,7 @@ if (args==""){ #Generate runScript
   print(paste0('Generated runfile for cluster (',ceiling(length(accD$tpairs$a) / ONEBATCH),' jobs). Please run from command line via: bsub < ',config$run_Gencor_script_filename))
   
   quit(save = "no")
-  # args<-c(1)
+  # args<-c(5)
 }
 
 N <- as.numeric(args[1])
@@ -773,7 +721,7 @@ if (sstart>length(accD$tpairs$a)){
   stop(paste("Index too high - ", N, " exiting..."))
 }
 
-if (ssend>length(accD$tpairs$a)){
+if(ssend>length(accD$tpairs$a)){
   ssend<-length(accD$tpairs$a)
 }
 
@@ -827,13 +775,14 @@ for( k in kl){
 
 ###################################################################################
 
-amodes <- list("K", "E","NormK", "HH","NormHH")
-res=matrix(0, nrow = length(amodes)+20, ncol = (ssend-sstart+1))
+amodes <- list("GenCorr", "ResidCorr","NormGenCorr", "HHCorr","NormHHCorr")
+res=matrix(NA, nrow = 40, ncol = (ssend-sstart+1))
 rownames(res)<-c(unlist(amodes),
-                 "KinshipSigma1:KinshipSigma2","ErrorSigma1:ErrorSigma2","HouseholdSigma1:HouseholdSigma2","n","cor","cor-p.val",
-                 "Fisher_k_CI_Low:Fisher_k_CI_High","Fisher_k_pval","Fisher_HH_CI_Low:Fisher_HH_CI_High","Fisher_HH_pval",
-                 "Bootstrap_k_Nrep","Bootstrap_MeanK","Bootstrap_SdK","Bootstrap_k_pval","Bootstrap_k_vals",
-                 "Bootstrap_HH_Nrep","Bootstrap_MeanHH","Bootstrap_SdHH","Bootstrap_HH_pval","Bootstrap_HH_vals")
+                 "KinshipSigma1","KinshipSigma2","ErrorSigma1","ErrorSigma2","HouseholdSigma1","HouseholdSigma2","n_people","Spearman","Spearman_pval","modelPheno","modelPheno_pval",
+                 "Fisher_k_CI_Low","Fisher_k_CI_High","Fisher_k_pval","Fisher_HH_CI_Low","Fisher_HH_CI_High","Fisher_HH_pval",
+                 "Bootstrap_k_Nrep","GenCorrSD_CI_low","GenCorrSD_CI_high","GenCorr_F_pval","GenCorrQ_CI_low","GenCorrQ_CI_high","GenCorrQ_sig","Bootstrap_k_vals",
+                 "Bootstrap_HH_Nrep","HHCorrSD_CI_low","HHCorrSD_CI_high","HHCorr_F_pval","HHCorrQ_CI_low","HHCorrQ_CI_high","HHCorrQ_sig","Bootstrap_HH_vals",
+                 "K_neff","HH_neff")
 resnames <- rep("", ssend-sstart+1)
 pIDs = as.matrix(pdata[,IDFIELD])
 for (i in sstart:ssend){  # i = sstart+1
@@ -844,31 +793,7 @@ for (i in sstart:ssend){  # i = sstart+1
   
   if(length(avail.subjs)<100){
     print(paste0("Skipping based on too few samples - ",length(na.omit(pdata[[pheno.1]]))," and ",length(na.omit(pdata[[pheno.2]]))," samples: "))
-    res["KinshipSigma1:KinshipSigma2",i-sstart+1] <- "NA:NA"
-    res["HouseholdSigma1:HouseholdSigma2",i-sstart+1] <- "NA:NA"
-    res["ErrorSigma1:ErrorSigma2",i-sstart+1] <- "NA:NA"
-    res["E",i-sstart+1] <- NA
-    res["K",i-sstart+1] <- NA
-    res["NormK",i-sstart+1] <- NA
-    res["Fisher_k_CI_Low:Fisher_k_CI_High",i-sstart+1] <- "NA:NA"
-    res["Fisher_k_pval",i-sstart+1] <- NA
-    res["Fisher_HH_CI_Low:Fisher_HH_CI_High",i-sstart+1] <- "NA:NA"
-    res["Fisher_HH_pval",i-sstart+1] <- NA
-    res["Bootstrap_k_Nrep",i-sstart+1] <- NA
-    res["Bootstrap_MeanK",i-sstart+1] <- NA
-    res["Bootstrap_SdK",i-sstart+1] <- NA
-    res["Bootstrap_k_pval",i-sstart+1] <- NA
-    res["Bootstrap_k_vals",i-sstart+1] <- NA
-    res["Bootstrap_HH_Nrep",i-sstart+1] <- NA
-    res["Bootstrap_MeanHH",i-sstart+1] <- NA
-    res["Bootstrap_SdHH",i-sstart+1] <- NA
-    res["Bootstrap_HH_pval",i-sstart+1] <- NA
-    res["Bootstrap_HH_vals",i-sstart+1] <- NA
-    res["cor",i-sstart+1] <- NA
-    res["cor-p.val",i-sstart+1] <- NA
-    res["n",i-sstart+1] <- length(avail.subjs)
     resnames[i-sstart+1]<-paste(pheno.1,pheno.2,sep=";")
-    print(paste(pheno.1,"-",pheno.2,": K - NA (CI: NA-NA;pval - NA) ; NormK - NA (CI: NA-NA;pval - NA)"))
     next
   }
   ######################### partial Genecor calc ####################################
@@ -902,100 +827,136 @@ for (i in sstart:ssend){  # i = sstart+1
   VC.2 = VCs$VC.2.list
   ######################################################################
   gencor=calc.gencorr(VC.1$residuals, VC.2$residuals, covMatList, VC.1$XsTXsinv.ClosedForm)
-  res["KinshipSigma1:KinshipSigma2",i-sstart+1] <- paste0(VC.1$VC["Kinship"],":",VC.2$VC["Kinship"])
-  res["HouseholdSigma1:HouseholdSigma2",i-sstart+1] <- paste0(VC.1$VC["Household"],":",VC.2$VC["Household"])
-  res["ErrorSigma1:ErrorSigma2",i-sstart+1] <- paste0(VC.1$VC["error"],":",VC.2$VC["error"])
-  res["n",i-sstart+1] <- length(avail.subjs)
-  res["K",i-sstart+1] <- gencor$K
-  res["E",i-sstart+1] <- gencor$E
-  res["HH",i-sstart+1] <- gencor$HH
-  res["cor",i-sstart+1] <- cor.test(VC.1$residuals, VC.2$residuals)$estimate
-  res["cor-p.val",i-sstart+1] <- cor.test(VC.1$residuals, VC.2$residuals)$p.value
+  res["KinshipSigma1",i-sstart+1] <- VC.1$VC["Kinship"]
+  res["KinshipSigma2",i-sstart+1] <- VC.2$VC["Kinship"]
+  res["HouseholdSigma1",i-sstart+1] <- VC.1$VC["Household"]
+  res["HouseholdSigma2",i-sstart+1] <- VC.2$VC["Household"]
+  res["ErrorSigma1",i-sstart+1] <- VC.1$VC["error"]
+  res["ErrorSigma2",i-sstart+1] <- VC.2$VC["error"]
+  res["n_people",i-sstart+1] <- length(avail.subjs)
+  res["GenCorr",i-sstart+1] <- gencor$K
+  res["ResidCorr",i-sstart+1] <- gencor$E
+  res["HHCorr",i-sstart+1] <- gencor$HH
+  res["Spearman",i-sstart+1] <- cor.test(VC.1$residuals, VC.2$residuals)$estimate
+  res["Spearman_pval",i-sstart+1] <- cor.test(VC.1$residuals, VC.2$residuals)$p.value
   resnames[i-sstart+1]<-paste(pheno.1,pheno.2,sep=";")
   
   ####
   s1=VC.1$VC["Kinship"];s2=VC.2$VC["Kinship"]
   h1=VC.1$VC["Household"];h2=VC.2$VC["Household"]
   e1=VC.1$VC["error"];e2=VC.2$VC["error"]
+  res["modelPheno",i-sstart+1] <- e1*e2*gencor$E + s1*s2*gencor$K + h1*h2*gencor$HH
+  n = length(avail.subjs); r= as.numeric(res["modelPheno",i-sstart+1])
+  if(is.na(r)){
+    p <- NA
+  }else{
+    t <- (r*sqrt(n-2))/sqrt(1-r^2)
+    p <- 2*(1 - pt(abs(t),(n-2)))
+  }
+  res["modelPheno_pval",i-sstart+1] <- p
+  
   
   normgencor=(sqrt(s1)*sqrt(s2)*gencor$K) / sqrt((s1+h1+e1)*(s2+h2+e2))
-  res["NormK",i-sstart+1]=normgencor
+  res["NormGenCorr",i-sstart+1]=normgencor
   
   kinMat.zero.diag <- mat_phi[avail.subjs,avail.subjs]; diag(kinMat.zero.diag) <- 0
   kinMat.adj_n <- sqrt(sum(diag(tcrossprod(kinMat.zero.diag))))
   
   k_CI <- unlist(calc.fisher(gencor$K,kinMat.adj_n,conf = 0.05));
-  res["Fisher_k_CI_Low:Fisher_k_CI_High",i-sstart+1] <- paste0(k_CI["low"],":",k_CI["high"])
-  res["Fisher_k_pval",i-sstart+1] <- CItoPval(gencor$K,kinMat.adj_n)
+  fisher.vals <- r.test(n = kinMat.adj_n+3, r12 = gencor$K)
+  
+  
+  res["Fisher_k_CI_Low",i-sstart+1] <- k_CI["low"]
+  res["Fisher_k_CI_High",i-sstart+1] <- k_CI["high"]
+  res["Fisher_k_pval",i-sstart+1] <- fisher.vals$p
   
   print(paste(pheno.1,"-",pheno.2,": K - ",gencor$K," (Fisher_CI: ",k_CI["low"],"-",k_CI["high"],";pval - ",
               res["Fisher_k_pval",i-sstart+1]))
   
   ####
   normgencor=(sqrt(h1)*sqrt(h2)*gencor$HH) / sqrt((s1+h1+e1)*(s2+h2+e2))
-  res["NormHH",i-sstart+1]=normgencor
+  res["NormHHCorr",i-sstart+1]=normgencor
   
   hhMat.zero.diag <- mat_hh[avail.subjs,avail.subjs]; diag(hhMat.zero.diag) <- 0
   hhMat.adj_n <- sqrt(sum(diag(tcrossprod(hhMat.zero.diag))))
   
   hh_CI <- unlist(calc.fisher(gencor$HH,hhMat.adj_n,conf = 0.05));
-  res["Fisher_HH_CI_Low:Fisher_HH_CI_High",i-sstart+1] <- paste0(hh_CI["low"],":",hh_CI["high"])
-  res["Fisher_HH_pval",i-sstart+1] <- CItoPval(gencor$HH,hhMat.adj_n)
+  fisher.vals <- r.test(n = hhMat.adj_n+3, r12 = gencor$HH)
+
+  res["Fisher_HH_CI_Low",i-sstart+1] <- hh_CI["low"]
+  res["Fisher_HH_CI_High",i-sstart+1] <- hh_CI["high"]
+  res["Fisher_HH_pval",i-sstart+1] <- fisher.vals$p
   
   print(paste(pheno.1,"-",pheno.2,": HH - ",gencor$HH," (Fisher_CI: ",hh_CI["low"],"-",hh_CI["high"],";pval - ",
               res["Fisher_HH_pval",i-sstart+1]))
   
+  res["K_neff",i-sstart+1] <- kinMat.adj_n
+  res["HH_neff",i-sstart+1] <- hhMat.adj_n
   ######################### Bootstrap VC calc ####################################
   if(!is.na(gencor$K)){
-    print(paste0("Bootstrapping ",NREP," times..."))
+    print(paste0("Bootstrapping K ",NREP," times..."))
     tresK <- calc.bootstrap(gencor$VC.1,gencor$VC.2,gencor$kVC.1,gencor$kVC.2,lookupK, GrpsK, SinglesK, nrep = NREP)
     
-    if(gencor$K<0){
-      ppval <- length(which(tresK>0))/NREP
-    }else{
-      ppval <- length(which(tresK<0))/NREP
-    }
+    s <- as.numeric(tresK)
+    s[is.nan(s)] <- NA
+    s[s == -100] <- NA
+    s[s < -1] <- -1
+    s[s > 1] <- 1
+    
+    s2 <- s[!is.na(s)]
+    
+    z <- sapply(s2, fisher_transform)
+    mu <-fisher_transform(gencor$K)
+    zmean <- mean(z);zsd <- sd(z); # mean(s2);sd(s2)
+    lh <- calc.fisher.CI(zmean,zsd)
+    p.value <- pchisq((zmean/zsd)^2, df =1, lower.tail = FALSE)
     
     res["Bootstrap_k_Nrep",i-sstart+1] <- NREP
-    res["Bootstrap_MeanK",i-sstart+1] <- mean(tresK,na.rm = TRUE)
-    res["Bootstrap_SdK",i-sstart+1] <- sd(tresK,na.rm = TRUE)
-    res["Bootstrap_k_pval",i-sstart+1] <- ppval
-    res["Bootstrap_k_vals",i-sstart+1] <- paste0(round(tresK*100,0)/100,collapse = ";")
+    res["GenCorrSD_CI_low",i-sstart+1] <- lh$low
+    res["GenCorrSD_CI_high",i-sstart+1] <- lh$high
+    res["GenCorr_F_pval",i-sstart+1] <- p.value
+    res["GenCorrQ_CI_low",i-sstart+1] <- quantile(s2,probs = c(0.025,0.975),na.rm = T)[1]
+    res["GenCorrQ_CI_high",i-sstart+1] <- quantile(s2,probs = c(0.025,0.975),na.rm = T)[2]
+    res["GenCorrQ_sig",i-sstart+1] <- as.logical(!between(0, res["GenCorrQ_CI_low",i-sstart+1],res["GenCorrQ_CI_high",i-sstart+1]))
+    res["Bootstrap_k_vals",i-sstart+1] <- paste0(round(tresK*1000,0)/1000,collapse = ";")
     
-    print(paste("K: MeanBtstrp - ",mean(tresK,na.rm = TRUE),
-                " SdBtstrp - ",sd(tresK,na.rm = TRUE)," pval - ",ppval))
+    print(paste("K: ",gencor$K," [",res["GenCorrQ_CI_low",i-sstart+1],",",
+                res["GenCorrQ_CI_high",i-sstart+1],"] 95% sig - ",
+                res["GenCorrQ_sig",i-sstart+1]))
   
-  }else{
-    res["Bootstrap_k_Nrep",i-sstart+1] <- NREP
-    res["Bootstrap_MeanK",i-sstart+1] <- -100
-    res["Bootstrap_SdK",i-sstart+1] <- -100
-    res["Bootstrap_k_pval",i-sstart+1] <- -100
-    res["Bootstrap_k_vals",i-sstart+1] <- -100
-  }    
+  }
+  
   if(!is.na(gencor$HH)){
     ####
+    print(paste0("Bootstrapping HH ",NREP," times..."))
     tresHH <- calc.bootstrap(gencor$VC.1,gencor$VC.2,gencor$hVC.1,gencor$hVC.2,lookupHH, GrpsHH, SinglesHH, nrep = NREP)
     
-    if(gencor$HH<0){
-      ppval <- length(which(tresHH>0))/NREP
-    }else{
-      ppval <- length(which(tresHH<0))/NREP
-    }
+    s <- as.numeric(tresHH)
+    s[is.nan(s)] <- NA
+    s[s == -100] <- NA
+    s[s < -1] <- -1
+    s[s > 1] <- 1
+    
+    s2 <- s[!is.na(s)]
+    
+    z <- sapply(s2, fisher_transform)
+    mu <-fisher_transform(gencor$HH)
+    zmean <- mean(z);zsd <- sd(z); # mean(s2);sd(s2)
+    lh <- calc.fisher.CI(zmean,zsd)
+    p.value <- pchisq((zmean/zsd)^2, df =1, lower.tail = FALSE)
     
     res["Bootstrap_HH_Nrep",i-sstart+1] <- NREP
-    res["Bootstrap_MeanHH",i-sstart+1] <- mean(tresHH,na.rm = TRUE)
-    res["Bootstrap_SdHH",i-sstart+1] <- sd(tresHH,na.rm = TRUE)
-    res["Bootstrap_HH_pval",i-sstart+1] <- ppval
-    res["Bootstrap_HH_vals",i-sstart+1] <- paste0(round(tresHH*100,0)/100,collapse = ";")
+    res["HHCorrSD_CI_low",i-sstart+1] <- lh$low
+    res["HHCorrSD_CI_high",i-sstart+1] <- lh$high
+    res["HHCorr_F_pval",i-sstart+1] <- p.value
+    res["HHCorrQ_CI_low",i-sstart+1] <- quantile(s2,probs = c(0.025,0.975),na.rm = T)[1]
+    res["HHCorrQ_CI_high",i-sstart+1] <- quantile(s2,probs = c(0.025,0.975),na.rm = T)[2]
+    res["HHCorrQ_sig",i-sstart+1] <- as.logical(!between(0, res["HHCorrQ_CI_low",i-sstart+1],res["HHCorrQ_CI_high",i-sstart+1]))
+    res["Bootstrap_HH_vals",i-sstart+1] <- paste0(round(tresHH*1000,0)/1000,collapse = ";")
     
-    print(paste("HH: MeanBtstrp - ",mean(tresHH,na.rm = TRUE),
-                " SdBtstrp - ",sd(tresHH,na.rm = TRUE)," pval - ",ppval))
-  }else{
-    res["Bootstrap_HH_Nrep",i-sstart+1] <- NREP
-    res["Bootstrap_MeanHH",i-sstart+1] <- -100
-    res["Bootstrap_SdHH",i-sstart+1] <- -100
-    res["Bootstrap_HH_pval",i-sstart+1] <- -100
-    res["Bootstrap_HH_vals",i-sstart+1] <- -100
+    print(paste("HH: ",gencor$HH," [",res["HHCorrQ_CI_low",i-sstart+1],",",
+                res["HHCorrQ_CI_high",i-sstart+1],"] 95% sig - ",
+                res["HHCorrQ_sig",i-sstart+1]))
   }
 }
 
