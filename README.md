@@ -118,7 +118,7 @@ run this line via the command line. This will submit as many jobs as have failed
 
 ### Step 4 – Calculate Genetic Correlations in batches on the cluster
 Now we get to the actual genetic correlation calculation. First run  <br>
-/data/myProject/Code/4_SOFER_GenCor_distrib_Kinship_Household_v9.R <br>
+/data/myProject/Code/4_HEc_distrib_Kinship_Household_v9.R <br>
 with the config file as a parameter (Same as Step 2). Very fast.  <br>
 This will generate a shell-script file which name you define in the config file under: <br>
 “run_Gencor_script_filename” <br>
@@ -129,7 +129,7 @@ then you run it like this: <br>
 This will submit as many jobs as you have genetic correlations in the file. Need to wait for it to finish. May take minutes to days depending on cluster availability. Wait till all finish <br>
 
 ### Step 5 – Combine Genetic Correlations batches
-Run from command line: “/data/myProject/Code/5_SOFER_GenCor_combine_Kinship_Household_v9.R” <br>
+Run from command line: “/data/myProject/Code/5_HEc_combine_Kinship_Household_v9.R” <br>
 with the config file as a parameter (Same as Step 2). Pretty fast <br>
 
 
