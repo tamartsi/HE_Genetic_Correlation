@@ -1,6 +1,6 @@
 # HEc v0.9
 	
-##Introduction
+## Introduction
 This package is an HE implementation to calculate genetic and/or any other correlation between pairs of variables that are related via some relatedness matrices. Essentially this calculation will answer the question: “What fraction of the correlation between variables is due to the relatedness”.
 For any significant number of traits these computations require a computing cluster. This version works with the LSF scheduler although any other can be easily implemented. Because of the cluster-related steps, this is organized as a pipeline with several steps that need to be executed one after another. 
 The general approach is you construct one config file for the whole process and then pass it to the different R scripts in this package. Some of them will generate run-files which are needed to be run on the cluster. 
