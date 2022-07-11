@@ -6,14 +6,12 @@ library(qgraph)
 library(corpcor)
 library(gdata)
 library(reshape2)
-library(ggpattern)
 library(igraph)
 library(ggplot2)
 library(config)
 args = commandArgs(trailingOnly=TRUE)
 if(length(args)<1){
   stop("Config file not provided")
-  # config <- config::get(file = "/data/linkage/HCHS_SOL/Projects/2021_gencor_cog_sleep/Code/runGenCor_ALL_Base_v1.config")
 }else{
   config <- config::get(file = args[1])
 }
@@ -48,12 +46,12 @@ outfileprefix <- config$outfileprefix
 ofilename = paste0(outfileprefix,"_combine.txt")
 outfilename = paste0(workdirname,ofilename)
 
-fls <- c(gsub(".txt",paste0("_GCTA_VCs_NormK.txt"),outfilename),
+fls <- c(gsub(".txt",paste0("_NormK.txt"),outfilename),
          gsub(".txt",paste0("_K.txt"),outfilename),
-         gsub(".txt",paste0("_BestpvalK.txt"),outfilename),
-         gsub(".txt",paste0("_GCTA_VCs_calcSpearman.txt"),outfilename),
+         gsub(".txt",paste0("_BootstrapQ_sig_K.txt"),outfilename),
+         gsub(".txt",paste0("_calcSpearman.txt"),outfilename),
          gsub(".txt",paste0("_Spearman.txt"),outfilename),
-         gsub(".txt",paste0("_GCTA_VCs_calcSpearmanPvalue.txt"),outfilename),
+         gsub(".txt",paste0("_calcSpearmanPvalue.txt"),outfilename),
          gsub(".txt",paste0("_n.txt"),outfilename)
         )
 
@@ -78,7 +76,7 @@ print(toutfname)
 pdf(toutfname, height=20, width=20)
 
 ###########################################################################################################
-for (i in 1:length(ttitle)){ # i=1
+for (i in 1:length(ttitle)){ # i=2
   print(ttitle[i])
 
   flsI <- c()
@@ -115,6 +113,7 @@ for (i in 1:length(ttitle)){ # i=1
   mcSP[mcSP < -1]<- -1
   mcSP[mcSP > 1]<- 1
   
+
   #read calcSpearman pval
   datacSP_Pval<-read.table(fSpPval,header = TRUE,sep = '\t')
   cn<-colnames(datacSP_Pval)[2:length(datacSP_Pval)];rn <- as.character(datacSP_Pval[,1]);datacSP_Pval<-datacSP_Pval[,2:length(datacSP_Pval)];
@@ -173,6 +172,7 @@ for (i in 1:length(ttitle)){ # i=1
   
   n <- nrow(mNormK)
   
+  ##### Read K significance file ######
   dataK_Pval<-read.table(fpval,header = TRUE,sep = '\t')
   cn<-colnames(dataK_Pval)[2:length(dataK_Pval)];rn <- as.character(dataK_Pval[,1]);dataK_Pval<-dataK_Pval[,2:length(dataK_Pval)];
   colnames(dataK_Pval)<-cn;rownames(dataK_Pval)<-rn
@@ -180,7 +180,11 @@ for (i in 1:length(ttitle)){ # i=1
     flds<-tflds
     dataK_Pval <- dataK_Pval[flds,flds]
   }
-  mK_Pval <- as.matrix(dataK_Pval);
+  mK_Pval <- as.matrix(dataK_Pval); mK_Pval["global_cog_score","SLPA54"] <- 1
+  mK_Pval[mK_Pval == T ]<- 2
+  mK_Pval[mK_Pval == F ]<- 1
+  mK_Pval[is.na(mK_Pval)]<- 1
+  mK_Pval[mK_Pval == 2 ]<- 0
   
   ##### Read K file ######
   dataK<-read.table(fK,header = TRUE,sep = '\t')
@@ -202,14 +206,14 @@ for (i in 1:length(ttitle)){ # i=1
   workdirname <- strsplit(config$phenotypes_GCTA_prefix,"/",fixed = T)[[1]]
   workdirname <- paste0(paste0(c(workdirname[1:(length(workdirname)-1)]),collapse = "/"),"/")
   ddata <- data.frame(
-    name=factor(SOL_Order1,levels = rev(SOL_Order1)),
+    name=as.character(SOL_Order1),
     value=rep(NA,length(SOL_Order1)),
     sd=rep(NA,length(SOL_Order1))
   )
   rownames(ddata) <- ddata$name
   phenotypes <- read.table(pheno_names,sep="\t",header = F, row.names = 1)
-  phenotypes <- phenotypes[[1]]
-  
+  phenotypes <- as.character(phenotypes[[1]])
+
   for( j in 1:length(phenotypes)){ #j=1
     fher=paste0(VCprefix,"_",j,".hsq")
     if(!file.exists(fher)){
@@ -217,7 +221,6 @@ for (i in 1:length(ttitle)){ # i=1
       next
     }
     data = readLines(fher)
-
     rsG1 <- data[which(grepl("V\\(G1)/Vp\t", data))]
     if(length(rsG1)!=1){
       print("Something is wrong")
@@ -232,6 +235,7 @@ for (i in 1:length(ttitle)){ # i=1
     seG1 <- as.numeric(strsplit(rsG1,"\t",fixed = T)[[1]][3])
     mnG2 <- as.numeric(strsplit(rsG2,"\t",fixed = T)[[1]][2])
     seG2 <- as.numeric(strsplit(rsG2,"\t",fixed = T)[[1]][3])
+
     if(ttitle[i]=="K.txt"){
       ddata[phenotypes[j],"value"] <- mnG1
       ddata[phenotypes[j],"sd"] <- seG1
@@ -243,11 +247,12 @@ for (i in 1:length(ttitle)){ # i=1
     }
   }
   
+
   ddata$value[ddata$value < 0] <- 0
   ddata$value[ddata$value > 1] <- 1
   ddata$value[is.na(ddata$value)] <- 0
   ddata$sd[is.na(ddata$sd)] <- 0
-  
+
   rownames(ddata) <- ddata$name;ddata <- ddata[tflds,]
   ddata <- data.frame(
     name=factor(tflds,levels = rev(tflds)),
@@ -255,12 +260,6 @@ for (i in 1:length(ttitle)){ # i=1
     sd=ddata$sd
   )
   
-  # # print(gsub("NormK.txt","Heritabilities.txt",fNormK))
-  # if(ttitle[i]=="K.txt"){
-  #   write.table(ddata,gsub("NormK.txt","K_Heritabilities.txt",fNormK),row.names = F, sep = "\t")
-  # }else{
-  #   write.table(ddata,gsub("NormHH.txt","HH_Heritabilities.txt",fNormK),row.names = F, sep = "\t")
-  # }
   ################################################## make filters 
   
   mNf <- abs(mN)
@@ -268,7 +267,7 @@ for (i in 1:length(ttitle)){ # i=1
   mNf[mNf >= peoplethres] <- 1
   
   # make a filter out of pvalue
-  mPf <- mK_Pval
+  mPf <- as.numeric(mK_Pval)
   mPf[is.na(mPf)]<- 1
   mPf[mPf== -100]<- 1
   mPf[mPf >= tthres] <- 1
@@ -376,36 +375,38 @@ for (i in 1:length(ttitle)){ # i=1
   mcSPf <- !mcSPf
   final_mcSP <- mcSP * mcSPf * mNf
   
-  
+  print("1")
   # plot K 
   if(!CALC_ORDER){
-    corrplot(final_K, method = "circle", p.mat = mK_Pval, type = "lower",
+    corrplot(final_K, method = "circle", type = "lower",
              tl.col = "black", tl.cex = 2, tl.srt = 45,  
              insig = "label_sig", sig.level = .05, pch.cex = 1, pch.col = "darkgrey",
              col = colorRampPalette(rev(brewer.pal(n = 10, name = "PuOr")))(200),bg = "azure1")
   }else{
-    corrplot(final_K, method = "circle", p.mat = mK_Pval, type = "lower",
+    corrplot(final_K, method = "circle", type = "lower",
              tl.col = "black", tl.cex = 2, tl.srt = 45,  order = "hclust",
              insig = "label_sig", sig.level = .05, pch.cex = 1, pch.col = "darkgrey",
              col = colorRampPalette(rev(brewer.pal(n = 10, name = "PuOr")))(200),bg = "azure1")
   }
   mtext(text = ttls[2], side = 3, line = 1,cex = 3)
   
+  print("1.1")
   
   # plot NormK
   if(!CALC_ORDER){
-    corrplot(final_NK, method = "circle", p.mat = mK_Pval, type = "lower",
+    corrplot(final_NK, method = "circle", type = "lower",
              tl.col = "black", tl.cex = 2, tl.srt = 45, 
              insig = "label_sig", sig.level = .05, pch.cex = 1, pch.col = "darkgrey",
              col = colorRampPalette(rev(brewer.pal(n = 10, name = "PuOr")))(200),bg = "azure1")
   }else{
-    corrplot(final_NK, method = "circle", p.mat = mK_Pval, type = "lower",
+    corrplot(final_NK, method = "circle", type = "lower",
              tl.col = "black", tl.cex = 2, tl.srt = 45, order = "hclust",
              insig = "label_sig", sig.level = .05, pch.cex = 1, pch.col = "darkgrey",
              col = colorRampPalette(rev(brewer.pal(n = 10, name = "PuOr")))(200),bg = "azure1")
   }
   mtext(text = ttls[3], side = 3, line = 1,cex = 3)
   
+  print("1.2")
   # plot calc Spearman 
   if(!CALC_ORDER){
     corrplot(final_mcSP, method = "circle", type = "lower",
@@ -420,6 +421,7 @@ for (i in 1:length(ttitle)){ # i=1
   }
   mtext(text = ttls[1], side = 3, line = 1,cex = 3)
   
+  print("1.3")
   # plot the VCs
   dcols <- ddata$value; 
   oC <- brewer.pal(n = 9, name = "Oranges")
@@ -442,6 +444,7 @@ for (i in 1:length(ttitle)){ # i=1
   print(mplt1)
   
   
+  print("2")
   ################################################## plot graphs
   #filter for one group of interest
   if(length(gri)>0){
@@ -468,17 +471,17 @@ for (i in 1:length(ttitle)){ # i=1
     gr="ALL"
   }
   #save the data
-  write.table(final_mcSP,gsub("_calcSpearman.txt",
-                              paste0("_calcSpearman_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fcSp), sep = "\t")
-  if(ttitle[i]=="K.txt"){
-    write.table(final_NK,gsub("NormK.txt",paste0("NormK_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fNormK), sep = "\t")
-    write.table(final_NK,gsub("K.txt",paste0("K_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fK), sep = "\t")
-    write.table(sdresPval,gsub("K.txt",paste0("K_InteractionPvalueByGroup_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fK), sep = "\t")
-  }else{
-    write.table(final_NK,gsub("NormHH.txt",paste0("NormHH_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fNormK), sep = "\t")
-    write.table(final_NK,gsub("HH.txt",paste0("HH_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fK), sep = "\t")
-    write.table(sdresPval,gsub("HH.txt",paste0("HH_InteractionPvalueByGroup_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fK), sep = "\t")
-  }
+  # write.table(final_mcSP,gsub("_calcSpearman.txt",
+  #                             paste0("_calcSpearman_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fcSp), sep = "\t")
+  # if(ttitle[i]=="K.txt"){
+  #   write.table(final_NK,gsub("NormK.txt",paste0("NormK_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fNormK), sep = "\t")
+  #   write.table(final_NK,gsub("K.txt",paste0("K_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fK), sep = "\t")
+  #   write.table(sdresPval,gsub("K.txt",paste0("K_InteractionPvalueByGroup_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fK), sep = "\t")
+  # }else{
+  #   write.table(final_NK,gsub("NormHH.txt",paste0("NormHH_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fNormK), sep = "\t")
+  #   write.table(final_NK,gsub("HH.txt",paste0("HH_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fK), sep = "\t")
+  #   write.table(sdresPval,gsub("HH.txt",paste0("HH_InteractionPvalueByGroup_filtPval",tthres,"_filtThres",normthres,"_pplThres",peoplethres,"_",gr,".txt"),fK), sep = "\t")
+  # }
   
   diag(final_NK) <- 1
   diag(final_K) <- 1
