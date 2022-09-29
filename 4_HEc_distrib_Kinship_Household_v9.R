@@ -1,6 +1,9 @@
 library(hash)
 library(config)
 library(psych)
+library(magrittr) # Yana: added this library, got errors without (needs to be run every time you start R and want to use %>%)
+library(dplyr) # Yana: added this library, got errors without (alternatively, this also loads %>%)
+library(tidyr)
 
 args = commandArgs(trailingOnly=TRUE)
 if(length(args)<1){
@@ -9,7 +12,6 @@ if(length(args)<1){
   config <- config::get(file = args[1])
 }
 
-# config <- config::get(file = "/data/linkage/HCHS_SOL/Projects/2021_gencor_cog_sleep/gen_cor_trial/runGenCor_ALL_Base_v1.config")
 #calculate genetic correlation between two traits given One matrix
 calc.gencorr <- function( bVC.1, bVC.2, covMatList, XsTXsinv.ClosedForm){
   
@@ -35,7 +37,11 @@ calc.gencorr <- function( bVC.1, bVC.2, covMatList, XsTXsinv.ClosedForm){
   errorMat = diag(x = 1, nrow = nrow(kinMat), ncol = nrow(kinMat))
 
   wgts = XsTXsinv.ClosedForm["Kinship",] 
-  kinMat.adjusted = wgts["error"]*errorMat + wgts["Kinship"]*kinMat + wgts["Household"]*houseMat
+  if("Household" %in% names(wgts)){
+    kinMat.adjusted = wgts["error"]*errorMat + wgts["Kinship"]*kinMat + wgts["Household"]*houseMat
+  }else{
+    kinMat.adjusted = wgts["error"]*errorMat + wgts["Kinship"]*kinMat
+  }
   
   kVC.1 <- kinMat.adjusted %*% bVC.1[iids]; names(kVC.1) <- names(bVC.1)
   kVC.2 <- kinMat.adjusted %*% bVC.2[iids]; names(kVC.2) <- names(bVC.2)
@@ -57,7 +63,11 @@ calc.gencorr <- function( bVC.1, bVC.2, covMatList, XsTXsinv.ClosedForm){
   
   
   wgts = XsTXsinv.ClosedForm["error",] 
-  kinMat.adjusted = wgts["error"]*errorMat + wgts["Kinship"]*kinMat + wgts["Household"]*houseMat
+  if("Household" %in% names(wgts)){
+    kinMat.adjusted = wgts["error"]*errorMat + wgts["Kinship"]*kinMat + wgts["Household"]*houseMat
+  }else{
+    kinMat.adjusted = wgts["error"]*errorMat + wgts["Kinship"]*kinMat
+  }
   
   arg1 <- t(bVC.1[iids]) %*%  kinMat.adjusted %*% bVC.2[iids]
   arg2 <- t(bVC.1[iids]) %*%  kinMat.adjusted %*% bVC.1[iids]
@@ -68,24 +78,29 @@ calc.gencorr <- function( bVC.1, bVC.2, covMatList, XsTXsinv.ClosedForm){
     agencor$E=abs(agencor$E)
   }
   
-  wgts = XsTXsinv.ClosedForm["Household",] 
-  kinMat.adjusted = wgts["error"]*errorMat + wgts["Kinship"]*kinMat + wgts["Household"]*houseMat
-  
-  hVC.1 <- kinMat.adjusted %*% bVC.1[iids]; names(hVC.1) <- names(bVC.1)
-  hVC.2 <- kinMat.adjusted %*% bVC.2[iids]; names(hVC.2) <- names(bVC.2)
-  
-  arg1 <- t(bVC.1[iids]) %*%  hVC.2
-  arg2 <- t(bVC.1[iids]) %*%  hVC.1
-  arg3 <- t(bVC.2[iids]) %*%  hVC.2
-  agencor$HH <- arg1/sqrt(arg2*arg3)
-  
-  if((arg1==arg2)&(arg2==arg3)){
-    agencor$HH=abs(agencor$HH)
+  if("Household" %in% names(wgts)){
+    wgts = XsTXsinv.ClosedForm["Household",] 
+    kinMat.adjusted = wgts["error"]*errorMat + wgts["Kinship"]*kinMat + wgts["Household"]*houseMat
+    
+    hVC.1 <- kinMat.adjusted %*% bVC.1[iids]; names(hVC.1) <- names(bVC.1)
+    hVC.2 <- kinMat.adjusted %*% bVC.2[iids]; names(hVC.2) <- names(bVC.2)
+    
+    arg1 <- t(bVC.1[iids]) %*%  hVC.2
+    arg2 <- t(bVC.1[iids]) %*%  hVC.1
+    arg3 <- t(bVC.2[iids]) %*%  hVC.2
+    agencor$HH <- arg1/sqrt(arg2*arg3)
+    
+    if((arg1==arg2)&(arg2==arg3)){
+      agencor$HH=abs(agencor$HH)
+    }
+    
+    # This is a speedup for bootstrap
+    agencor$hVC.1 <- hVC.1
+    agencor$hVC.2 <- hVC.2
+  }else{
+    agencor$hVC.1 <- NA
+    agencor$hVC.2 <- NA
   }
-  
-  # This is a speedup for bootstrap
-  agencor$hVC.1 <- hVC.1
-  agencor$hVC.2 <- hVC.2
   
   return(agencor)
 }
@@ -107,6 +122,9 @@ calc.bootstrap <- function( sVC.1, sVC.2, aVC.1, aVC.2, lookup, Grps, Singles, n
   #blocked
   gnames <- intersect(names(sVC.1),names(sVC.2))
   tresb <- c()
+  if(nrep<1){
+    return(tresb)
+  }
   tGrps <- Grps[Grps %in% intersect(Grps,gnames)]; Numgrps <- length(tGrps)
   tSingles <- Singles[Singles %in% intersect(Singles,gnames)]
   for(k in 1:nrep){
@@ -603,29 +621,46 @@ covariates0 = config$factor_covariates
 covariates1 <- config$numeric_covariates
 covariates = c(covariates0,covariates1)
 
-IBD_order_TOPMed_NormK <- config$phenotypes_fieldnames
+if((length(config$phenotypes_fieldnames)==1) & (length(grep('-',config$phenotypes_fieldnames))==1)){   #10-100
+  sst <- as.numeric(strsplit(config$phenotypes_fieldnames,"-")[[1]][1])
+  sse <- as.numeric(strsplit(config$phenotypes_fieldnames,"-")[[1]][2])
+  IBD_order_TOPMed_NormK <- colnames(phenotypes)[sst:sse]
+}else{
+  IBD_order_TOPMed_NormK <- config$phenotypes_fieldnames
+}
 
 rownames(phenotypes) <- phenotypes[[config$idfield_name]]
-phenotypes <- phenotypes[,c(config$idfield_name,covariates,config$phenotypes_fieldnames)]
+phenotypes <- phenotypes[,c(config$idfield_name,covariates,IBD_order_TOPMed_NormK)]
 fstart <- length(covariates)+2
 IDFIELD <- config$idfield_name
 
 print("Loading relatedness matrices...")
 mat_phi <- readRDS(config$kinship_matrix_filename)
-mat_hh <- readRDS(config$household_matrix_filename)
-
 cn <- colnames(mat_phi);cn <- cn[!is.na(cn)]
-cn <- cn[cn %in% colnames(mat_hh)]
 cn <- cn[cn %in% phenotypes[[IDFIELD]]]
+
+if(length(config$household_matrix_filename)>0){
+  mat_hh <- readRDS(config$household_matrix_filename)
+  cn <- cn[cn %in% colnames(mat_hh)]
+}
+
 
 rownames(phenotypes) <- phenotypes[[IDFIELD]]
 pdata <- phenotypes[cn,]
 
 mat_phi <- mat_phi[cn,cn]
-mat_hh <- mat_hh[cn,cn]
+if(length(config$household_matrix_filename)>0){
+  mat_hh <- mat_hh[cn,cn]
+}
 
-covMatList<-list(as.matrix(mat_phi),as.matrix(mat_hh))                                    
-names(covMatList)<-c("Kinship","Household")
+if(length(config$household_matrix_filename)>0){
+  covMatList<-list(as.matrix(mat_phi),as.matrix(mat_hh))
+  names(covMatList)<-c("Kinship","Household")
+}else{
+  covMatList<-list(as.matrix(mat_phi))
+  names(covMatList)<-c("Kinship")
+}
+
 
 ONEBATCH <- config$ONEBATCH
 NREP <- config$BOOTSTRAP_REPEATS
@@ -674,9 +709,25 @@ if(file.exists(tpname)){
     tpairs <- read.table(file = pairfile,sep="\t",header = TRUE)
     tpairs <- data.frame(a=tpairs$row,b=tpairs$col)
   }else{
-    a <- match(config$phenotypes_group1,phenotypes)
-    b <- match(config$phenotypes_group2,phenotypes)
-    if((length(a)!=length(config$phenotypes_group1))|(length(b)!=length(config$phenotypes_group2))){
+    if((length(config$phenotypes_group1)==1) & (length(grep('-',config$phenotypes_group1))==1)){   #10-100
+      sst <- as.numeric(strsplit(config$phenotypes_group1,"-")[[1]][1])
+      sse <- as.numeric(strsplit(config$phenotypes_group1,"-")[[1]][2])
+      flds1 <- colnames(pdata)[sst:sse]
+    }else{
+      flds1 <- config$phenotypes_group1
+    }
+    
+    if((length(config$phenotypes_group2)==1) & (length(grep('-',config$phenotypes_group2))==1)){   #10-100
+      sst <- as.numeric(strsplit(config$phenotypes_group2,"-")[[1]][1])
+      sse <- as.numeric(strsplit(config$phenotypes_group2,"-")[[1]][2])
+      flds2 <- colnames(pdata)[sst:sse]
+    }else{
+      flds2 <- config$phenotypes_group2
+    }
+    
+    a <- match(flds1,phenotypes)
+    b <- match(flds2,phenotypes)
+    if((length(a)!=length(flds1))|(length(b)!=length(flds2))){
       stop("Unrecognized field names in config:phenotypes_group1 or config:phenotypes_group2")
     }
     tpairs <- expand.grid(a = a, b = b)
@@ -701,12 +752,20 @@ if ((args=="")|(args==0)){ #Generate runScript
              paste0("#BSUB -q ",config$LSF_QUEUE_NAME),
              paste0('#BSUB -R "rusage[mem=',config$LSF_MEMORY,']"'),
              paste0('#BSUB -J ',config$outfileprefix,'[1-',ceiling(length(accD$tpairs$a) / ONEBATCH),']'),
-             "module load R/4.0.2",
+             "module load R/testversions/4.2.0",
              paste0("Rscript ",getCurrentFileLocation()," ",config$this_config_filename))
   writeLines(rrows, fileConn)
   close(fileConn)
   Sys.chmod(config$run_Gencor_script_filename,"755")
   
+  fileConn<-file(gsub(".sh",".standalone.sh",config$run_Gencor_script_filename))
+  iids <- 1:ceiling(length(accD$tpairs$a) / ONEBATCH)
+  rrows <- c("#!/bin/sh",
+             paste0("export LSB_JOBINDEX=",iids,"; Rscript ",getCurrentFileLocation()," ",config$this_config_filename))
+  writeLines(rrows, fileConn)
+  close(fileConn)
+  Sys.chmod(gsub(".sh",".standalone.sh",config$run_Gencor_script_filename),"755")
+
   print(paste0('Generated runfile for cluster (',ceiling(length(accD$tpairs$a) / ONEBATCH),' jobs). Please run from command line via: bsub < ',config$run_Gencor_script_filename))
   
   quit(save = "no")
@@ -735,44 +794,47 @@ if (length(list.files(path=workdirname,pattern=toutfname))>0){
 
 ##################################### Load and calc data for blocked bootstrap
 
-load(block_file1)
-lookupK <- lookup
-NumsinglesK=0;NumgrpsK=0
-SinglesK<-c();GrpsK<-c()
-g <- hash();
-kl <- intersect(keys(lookupK),colnames(mat_phi))
-for( k in kl){
-  if(length(lookupK[[k]])<2){
-    NumsinglesK <- NumsinglesK + 1
-    SinglesK <- append(SinglesK,k)
-  }else{
-    if(!(paste0(lookupK[[k]],collapse = "-") %in% keys(g))){
-      NumgrpsK <- NumgrpsK + 1
-      GrpsK <- append(GrpsK,k)
-      g[[paste(lookupK[[k]],collapse = "-")]] = k
+if((length(block_file2)>0) & (NREP>0)){
+  load(block_file1)
+  lookupK <- lookup
+  NumsinglesK=0;NumgrpsK=0
+  SinglesK<-c();GrpsK<-c()
+  g <- hash();
+  kl <- intersect(keys(lookupK),colnames(mat_phi))
+  for( k in kl){
+    if(length(lookupK[[k]])<2){
+      NumsinglesK <- NumsinglesK + 1
+      SinglesK <- append(SinglesK,k)
+    }else{
+      if(!(paste0(lookupK[[k]],collapse = "-") %in% keys(g))){
+        NumgrpsK <- NumgrpsK + 1
+        GrpsK <- append(GrpsK,k)
+        g[[paste(lookupK[[k]],collapse = "-")]] = k
+      }
     }
   }
 }
 
-load(block_file2)
-lookupHH <- lookup
-NumsinglesHH=0;NumgrpsHH=0
-SinglesHH<-c();GrpsHH<-c()
-g <- hash();
-kl <- intersect(keys(lookupHH),colnames(mat_hh))
-for( k in kl){
-  if(length(lookupHH[[k]])<2){
-    NumsinglesHH <- NumsinglesHH + 1
-    SinglesHH <- append(SinglesHH,k)
-  }else{
-    if(!(paste0(lookupHH[[k]],collapse = "-") %in% keys(g))){
-      NumgrpsHH <- NumgrpsHH + 1
-      GrpsHH <- append(GrpsHH,k)
-      g[[paste(lookupHH[[k]],collapse = "-")]] = k
+if((length(block_file2)>0) & (NREP>0)){
+  load(block_file2)
+  lookupHH <- lookup
+  NumsinglesHH=0;NumgrpsHH=0
+  SinglesHH<-c();GrpsHH<-c()
+  g <- hash();
+  kl <- intersect(keys(lookupHH),colnames(mat_hh))
+  for( k in kl){
+    if(length(lookupHH[[k]])<2){
+      NumsinglesHH <- NumsinglesHH + 1
+      SinglesHH <- append(SinglesHH,k)
+    }else{
+      if(!(paste0(lookupHH[[k]],collapse = "-") %in% keys(g))){
+        NumgrpsHH <- NumgrpsHH + 1
+        GrpsHH <- append(GrpsHH,k)
+        g[[paste(lookupHH[[k]],collapse = "-")]] = k
+      }
     }
   }
 }
-
 ###################################################################################
 
 amodes <- list("GenCorr", "ResidCorr","NormGenCorr", "HHCorr","NormHHCorr")
@@ -829,23 +891,36 @@ for (i in sstart:ssend){  # i = sstart+1
   gencor=calc.gencorr(VC.1$residuals, VC.2$residuals, covMatList, VC.1$XsTXsinv.ClosedForm)
   res["KinshipSigma1",i-sstart+1] <- VC.1$VC["Kinship"]
   res["KinshipSigma2",i-sstart+1] <- VC.2$VC["Kinship"]
-  res["HouseholdSigma1",i-sstart+1] <- VC.1$VC["Household"]
-  res["HouseholdSigma2",i-sstart+1] <- VC.2$VC["Household"]
+  if(length(config$household_matrix_filename)>0){
+    res["HouseholdSigma1",i-sstart+1] <- VC.1$VC["Household"]
+    res["HouseholdSigma2",i-sstart+1] <- VC.2$VC["Household"]
+  }
   res["ErrorSigma1",i-sstart+1] <- VC.1$VC["error"]
   res["ErrorSigma2",i-sstart+1] <- VC.2$VC["error"]
   res["n_people",i-sstart+1] <- length(avail.subjs)
   res["GenCorr",i-sstart+1] <- gencor$K
   res["ResidCorr",i-sstart+1] <- gencor$E
-  res["HHCorr",i-sstart+1] <- gencor$HH
+  if(length(config$household_matrix_filename)>0){
+      res["HHCorr",i-sstart+1] <- gencor$HH
+  }
   res["Spearman",i-sstart+1] <- cor.test(VC.1$residuals, VC.2$residuals)$estimate
   res["Spearman_pval",i-sstart+1] <- cor.test(VC.1$residuals, VC.2$residuals)$p.value
   resnames[i-sstart+1]<-paste(pheno.1,pheno.2,sep=";")
   
   ####
   s1=VC.1$VC["Kinship"];s2=VC.2$VC["Kinship"]
-  h1=VC.1$VC["Household"];h2=VC.2$VC["Household"]
+  if(length(config$household_matrix_filename)>0){
+    h1=VC.1$VC["Household"];h2=VC.2$VC["Household"]
+  }else{
+    h1=0;h2=0;
+  }
   e1=VC.1$VC["error"];e2=VC.2$VC["error"]
-  res["modelPheno",i-sstart+1] <- e1*e2*gencor$E + s1*s2*gencor$K + h1*h2*gencor$HH
+  if(length(config$household_matrix_filename)>0){
+    res["modelPheno",i-sstart+1] <- e1*e2*gencor$E + s1*s2*gencor$K + h1*h2*gencor$HH
+  }else{
+    res["modelPheno",i-sstart+1] <- e1*e2*gencor$E + s1*s2*gencor$K
+  }
+
   n = length(avail.subjs); r= as.numeric(res["modelPheno",i-sstart+1])
   if(is.na(r)){
     p <- NA
@@ -874,26 +949,30 @@ for (i in sstart:ssend){  # i = sstart+1
               res["Fisher_k_pval",i-sstart+1]))
   
   ####
-  normgencor=(sqrt(h1)*sqrt(h2)*gencor$HH) / sqrt((s1+h1+e1)*(s2+h2+e2))
-  res["NormHHCorr",i-sstart+1]=normgencor
+  if(length(config$household_matrix_filename)>0){
+    normgencor=(sqrt(h1)*sqrt(h2)*gencor$HH) / sqrt((s1+h1+e1)*(s2+h2+e2))
+    res["NormHHCorr",i-sstart+1]=normgencor
+    
+    hhMat.zero.diag <- mat_hh[avail.subjs,avail.subjs]; diag(hhMat.zero.diag) <- 0
+    hhMat.adj_n <- sqrt(sum(diag(tcrossprod(hhMat.zero.diag))))
+    
+    hh_CI <- unlist(calc.fisher(gencor$HH,hhMat.adj_n,conf = 0.05));
+    fisher.vals <- r.test(n = hhMat.adj_n+3, r12 = gencor$HH)
   
-  hhMat.zero.diag <- mat_hh[avail.subjs,avail.subjs]; diag(hhMat.zero.diag) <- 0
-  hhMat.adj_n <- sqrt(sum(diag(tcrossprod(hhMat.zero.diag))))
-  
-  hh_CI <- unlist(calc.fisher(gencor$HH,hhMat.adj_n,conf = 0.05));
-  fisher.vals <- r.test(n = hhMat.adj_n+3, r12 = gencor$HH)
-
-  res["Fisher_HH_CI_Low",i-sstart+1] <- hh_CI["low"]
-  res["Fisher_HH_CI_High",i-sstart+1] <- hh_CI["high"]
-  res["Fisher_HH_pval",i-sstart+1] <- fisher.vals$p
-  
-  print(paste(pheno.1,"-",pheno.2,": HH - ",gencor$HH," (Fisher_CI: ",hh_CI["low"],"-",hh_CI["high"],";pval - ",
-              res["Fisher_HH_pval",i-sstart+1]))
+    res["Fisher_HH_CI_Low",i-sstart+1] <- hh_CI["low"]
+    res["Fisher_HH_CI_High",i-sstart+1] <- hh_CI["high"]
+    res["Fisher_HH_pval",i-sstart+1] <- fisher.vals$p
+    
+    print(paste(pheno.1,"-",pheno.2,": HH - ",gencor$HH," (Fisher_CI: ",hh_CI["low"],"-",hh_CI["high"],";pval - ",
+                res["Fisher_HH_pval",i-sstart+1]))
+  }else{
+    hhMat.adj_n <- NA
+  }
   
   res["K_neff",i-sstart+1] <- kinMat.adj_n
   res["HH_neff",i-sstart+1] <- hhMat.adj_n
   ######################### Bootstrap VC calc ####################################
-  if(!is.na(gencor$K)){
+  if((!is.na(gencor$K)) & (NREP>0)){
     print(paste0("Bootstrapping K ",NREP," times..."))
     tresK <- calc.bootstrap(gencor$VC.1,gencor$VC.2,gencor$kVC.1,gencor$kVC.2,lookupK, GrpsK, SinglesK, nrep = NREP)
     
@@ -926,7 +1005,7 @@ for (i in sstart:ssend){  # i = sstart+1
   
   }
   
-  if(!is.na(gencor$HH)){
+  if((!is.na(gencor$HH)) & (NREP>0)){
     ####
     print(paste0("Bootstrapping HH ",NREP," times..."))
     tresHH <- calc.bootstrap(gencor$VC.1,gencor$VC.2,gencor$hVC.1,gencor$hVC.2,lookupHH, GrpsHH, SinglesHH, nrep = NREP)
