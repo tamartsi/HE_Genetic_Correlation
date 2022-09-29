@@ -1,4 +1,4 @@
-# HEc v0.9
+# HEc v0.93
 	
 ## Introduction
 This package is an HE implementation to calculate genetic and/or any other correlation between pairs of variables that are related via some relatedness matrices. Essentially this calculation will answer the question: “What fraction of the correlation between variables is due to the relatedness”.
@@ -12,38 +12,39 @@ The general approach is you construct one config file for the whole process and 
 ## Outputs
 
 There is one file which ends with “longformat.txt”, it has all the resulting data – the following fields:
-- First Phenotype name
-- Second Phenotype name
-- Total (Phenotypic ) model correlation. 
-- Total model correlation pvalue
-- Number of people in each phenotype pair
-- Fractional Genetic Correlation
-- Genetic correlation
-- Genetic correlation p-value (Blocked Bootstrap, SD method)
-- Genetic correlation confidence interval – low bound (Blocked Bootstrap, SD method)
-- Genetic correlation confidence interval – high bound (Blocked Bootstrap, SD method)
-- Genetic correlation p-value, FDR corrected (Blocked Bootstrap, SD method)
-- Genetic correlation 95% confidence interval – low bound (Blocked Bootstrap, quantiles method)
-- Genetic correlation 95% confidence interval – high bound (Blocked Bootstrap, quantiles method)
-- Is Genetic correlation p-value significant for 95% confidence quantiles method (TRUE/FALSE)
-- Fractional Household Correlation
-- Household correlation
-- Household correlation p-value (Blocked Bootstrap, SD method)
-- Household correlation confidence interval – low bound (Blocked Bootstrap, SD method)
-- Household correlation confidence interval – high bound (Blocked Bootstrap, SD method)
-- Household correlation p-value, FDR corrected (Blocked Bootstrap, SD method)
-- Household correlation 95% confidence interval – low bound (Blocked Bootstrap, quantiles method)
-- Household correlation 95% confidence interval – high bound (Blocked Bootstrap, quantiles method)
-- Is Household correlation p-value significant for 95% confidence quantiles method (TRUE/FALSE)
-- Genetic correlation p-value (Fisher method)
-- Genetic correlation confidence interval – low bound (Fisher method)
-- Genetic correlation confidence interval – high bound (Fisher method)
-- Genetic correlation p-value, FDR corrected (Fisher method)
-- Household correlation p-value (Fisher method)
-- Household correlation confidence interval – low bound (Fisher method)
-- Household correlation confidence interval – high bound (Fisher method)
-- Household correlation p-value, FDR corrected (Fisher method)
-- Residual correlation
+ - First Phenotype name
+ - Second Phenotype name
+ - Total (Phenotypic ) model correlation. 
+ - Total model correlation pvalue
+ - Number of people in each phenotype pair
+ - Fractional Genetic Correlation
+ - Genetic correlation
+ - Genetic correlation p-value (Blocked Bootstrap, SD method)
+ - Genetic correlation confidence interval – low bound (Blocked Bootstrap, SD method)
+ - Genetic correlation confidence interval – high bound (Blocked Bootstrap, SD method)
+ - Genetic correlation p-value, FDR corrected (Blocked Bootstrap, SD method)
+ - Genetic correlation 95% confidence interval – low bound (Blocked Bootstrap, quantiles method)
+ - Genetic correlation 95% confidence interval – high bound (Blocked Bootstrap, quantiles method)
+ - Is Genetic correlation p-value significant for 95% confidence quantiles method (TRUE/FALSE)
+ - Fractional Household Correlation
+ - Household correlation (if provided household matrix)
+ - Household correlation p-value (Blocked Bootstrap, SD method) (if provided household matrix)
+ - Household correlation confidence interval – low bound (Blocked Bootstrap, SD method) (if provided household matrix)
+ - Household correlation confidence interval – high bound (Blocked Bootstrap, SD method) (if provided household matrix)
+ - Household correlation p-value, FDR corrected (Blocked Bootstrap, SD method) (if provided household matrix)
+ - Household correlation 95% confidence interval – low bound (Blocked Bootstrap, quantiles method) (if provided household matrix)
+ - Household correlation 95% confidence interval – high bound (Blocked Bootstrap, quantiles method) (if provided household matrix)
+ - Is Household correlation p-value significant for 95% confidence quantiles method (TRUE/FALSE) (if provided household matrix)
+ - Genetic correlation p-value (Fisher method)
+ - Genetic correlation confidence interval – low bound (Fisher method)
+ - Genetic correlation confidence interval – high bound (Fisher method)
+ - Genetic correlation p-value, FDR corrected (Fisher method)
+ - Household correlation p-value (Fisher method) (if provided household matrix)
+ - Household correlation confidence interval – low bound (Fisher method) (if provided household matrix)
+ - Household correlation confidence interval – high bound (Fisher method) (if provided household matrix)
+ - Household correlation p-value, FDR corrected (Fisher method) (if provided household matrix)
+ - Residual correlation
+
 
 This is the main results file, however the software will also generate each of these 32 as a matrix file with rows and columns being phenotypes and the corresponding values. These are used for figures generations later on.
  
@@ -73,15 +74,22 @@ Example: <br>
 
 
 ### Step 2 - Generate Blocked-Bootstrap helper file. 
-Run: “/data/myProject/Code/1_Generate_blocked_bootstrap_distmatr_v2.R” with the config file as a parameter. Very fast. Two ways you can do it.  <br>
-First way - from interactive shell : <br>
+*This step can be skipped if one doesn’t wish to perform bootstrap (i.e. “BOOTSTRAP_REPEATS : 0”  in the config file)
+
+Run: “/data/myProject/Code/1_Generate_blocked_bootstrap_distmatr_v2.R” with the config file as a parameter. Very fast. Three ways you can do it.  <br>
+
+First way - on a local linux environment:
+[user@userpc]$ Rscript /data/myProject/Code/1_Generate_blocked_bootstrap_distmatr_v2.R /data/myProject/Code/runGenCor_ALL_Base_v1.config 
+
+Second way - from interactive shell : <br>
 [user@eris1n3 ~]$ bsub -Is -q interact-big -R "rusage[mem=128000]" -n 8 csh <br>
 Job <341649> is submitted to queue <interact-big>. <br>
 <<Waiting for dispatch ...>> <br>
 <<Starting on celeste>> <br>
 [user@celeste ~]$ Rscript /data/myProject/Code/1_Generate_blocked_bootstrap_distmatr_v2.R /data/myProject/Code/runGenCor_ALL_Base_v1.config <br>
  <br>
-Or create a script file: “/data/myProject/Code/runBootstrap_v1.sh” <br>
+
+Third way - create a script file: “/data/myProject/Code/runBootstrap_v1.sh” <br>
 #!/bin/sh <br>
 #BSUB -o /data/myProject/DataProc/output_bootstrap_cluster.out <br>
 #BSUB -e /data/myProject/ DataProc/output_bootstrap_cluster.err <br>
@@ -127,6 +135,10 @@ You now need to run it on the cluster from command line. If the file is  <br>
 then you run it like this: <br>
 [user@eris1n3 ~]$  bsub < /data/myProject/DataProc/runRscript_distrib_Kinship_Household_BaseModel_All_v9.sh <br>
 This will submit as many jobs as you have genetic correlations in the file. Need to wait for it to finish. May take minutes to days depending on cluster availability. Wait till all finish <br>
+
+Alternatively you can run the standalone version:
+[user@userpc]$   /data/myProject/DataProc/runRscript_distrib_Kinship_Household_BaseModel_All_v9.standalone.sh
+
 
 ### Step 5 – Combine Genetic Correlations batches
 Run from command line: “/data/myProject/Code/5_HEc_combine_Kinship_Household_v9.R” <br>
@@ -186,6 +198,8 @@ default:
     kinship_matrix_filename : "/myProject/data/genetic_cor_kinship_matrix.RData"
     household_matrix_filename : "/myProject/data/genetic_cor_household_matrix.RData"
 
+    SNPnum : 638486     # Number of SNPs used to generate the Kinship matrix
+	
     # phenotypes file name – has to include ID, covariates and the phenotypes themselves
     phenotypes_filename : /myProject/data/genetic_cor_phenotype_baseline.RData
 
