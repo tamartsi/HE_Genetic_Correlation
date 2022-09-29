@@ -3,7 +3,6 @@ library(config)
 args = commandArgs(trailingOnly=TRUE)
 if(length(args)<1){
   stop("Config file not provided")
-  # config <- config::get(file = "/data/linkage/HCHS_SOL/Projects/2021_gencor_cog_sleep/Code/runGenCor_ALL_Base_v1.config")
 }else{
   config <- config::get(file = args[1])
 }
